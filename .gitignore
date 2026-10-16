@@ -1,0 +1,20 @@
+# Frontend dependencies and builds
+**/node_modules/
+**/dist/
+**/dist-ssr/
+**/*.local
+
+# Secrets
+.env
+.env.*
+!**/.env.example
+
+# Java build output
+**/target/
+**/build/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

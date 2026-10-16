@@ -1,0 +1,671 @@
+:root {
+  font-family: "Segoe UI", sans-serif;
+  color: #f5edf7;
+  background: #121114;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #d9b6e8;
+  outline-offset: 3px;
+}
+
+.app-shell {
+  width: min(1160px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 25px 0 22px;
+}
+
+.topbar,
+.topbar-note,
+.room-heading,
+.now-playing,
+.player-controls,
+.time-row,
+.section-heading,
+.queue-item,
+.room-footer,
+.page-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.topbar {
+  padding-bottom: 22px;
+  border-bottom: 1px solid #2b282e;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: #f8f1fa;
+  text-decoration: none;
+  font-size: 21px;
+  font-weight: 750;
+  letter-spacing: -0.7px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 39px;
+  height: 39px;
+  border-radius: 13px;
+  background: #d9b6e8;
+  color: #302236;
+  font-size: 25px;
+}
+
+.brand-accent {
+  color: #d9b6e8;
+}
+
+.topbar-note {
+  gap: 10px;
+  color: #a89faa;
+  font-size: 11px;
+}
+
+.online-dot,
+.live-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #9cdbb2;
+}
+
+.profile-avatar,
+.avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 2px solid #201d23;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-avatar {
+  width: 35px;
+  height: 35px;
+  background: #d8b6e8;
+  color: #35263c;
+}
+
+.welcome {
+  padding: 48px 0 34px;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #c9a7dc;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 1.7px;
+}
+
+.welcome h1 {
+  margin: 14px 0 12px;
+  font-size: clamp(38px, 5vw, 59px);
+  line-height: 1.08;
+  letter-spacing: -2.7px;
+}
+
+.welcome h1 span {
+  color: #d9b6e8;
+}
+
+.welcome-copy,
+.muted {
+  color: #aaa2ac;
+}
+
+.welcome-copy {
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.room-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(290px, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.player-panel,
+.friends-card,
+.queue-card {
+  border: 1px solid #2c2831;
+  border-radius: 20px;
+  background: #1a181d;
+}
+
+.player-panel {
+  padding: 24px;
+}
+
+.room-heading {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.room-kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #b4abb7;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+}
+
+.room-heading h2 {
+  margin: 10px 0 4px;
+  font-size: 23px;
+  letter-spacing: -0.7px;
+}
+
+.room-heading .muted,
+.now-playing .muted {
+  margin: 0;
+  font-size: 11px;
+}
+
+.invite-button {
+  padding: 10px 12px;
+  border: 1px solid #47364e;
+  border-radius: 11px;
+  background: #27212c;
+  color: #e3c9ee;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.invite-button:hover {
+  background: #34283d;
+}
+
+.album-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1.45;
+  margin: 24px 0 22px;
+  overflow: hidden;
+  border: 1px solid #ffffff17;
+  border-radius: 17px;
+  isolation: isolate;
+}
+
+.album-art::before,
+.album-art::after {
+  position: absolute;
+  z-index: -1;
+  width: 62%;
+  aspect-ratio: 1;
+  border: 1px solid #ffffff38;
+  border-radius: 50%;
+  content: "";
+}
+
+.album-art::before {
+  transform: translate(-25%, -12%);
+}
+
+.album-art::after {
+  width: 43%;
+  transform: translate(32%, 24%);
+}
+
+.violet {
+  background: linear-gradient(135deg, #675079, #29253b 58%, #ae85a6);
+}
+
+.sage {
+  background: linear-gradient(135deg, #43675a, #a3b9a4 55%, #293c36);
+}
+
+.peach {
+  background: linear-gradient(135deg, #8b5966, #e5ad98 58%, #614357);
+}
+
+.rose {
+  background: linear-gradient(135deg, #54374c, #c18ca0 55%, #33293e);
+}
+
+.sunset {
+  background: linear-gradient(135deg, #643f6b, #e3a16a 55%, #814c58);
+}
+
+.album-symbol {
+  display: grid;
+  place-items: center;
+  width: 105px;
+  height: 105px;
+  border: 1px solid #ffffff55;
+  border-radius: 50%;
+  background: #19131c35;
+  color: #fff4ed;
+  font-size: 57px;
+  backdrop-filter: blur(5px);
+}
+
+.album-spark {
+  position: absolute;
+  color: #fff1e5;
+  font-size: 24px;
+}
+
+.spark-one {
+  top: 22%;
+  left: 22%;
+}
+
+.spark-two {
+  right: 23%;
+  bottom: 20%;
+}
+
+.album-caption {
+  position: absolute;
+  bottom: 14px;
+  left: 15px;
+  color: #ffffffbf;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 1.7px;
+}
+
+.now-playing {
+  gap: 10px;
+}
+
+.now-playing h2 {
+  margin: 7px 0 4px;
+  font-size: 22px;
+  letter-spacing: -0.5px;
+}
+
+.like-button {
+  width: 41px;
+  height: 41px;
+  border: 1px solid #38313d;
+  border-radius: 13px;
+  background: #242027;
+  color: #edbda9;
+  font-size: 23px;
+}
+
+.progress-track {
+  height: 4px;
+  margin-top: 22px;
+  overflow: hidden;
+  border-radius: 20px;
+  background: #3b3540;
+}
+
+.progress-fill {
+  display: block;
+  width: 34%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #c49be0, #eab69e);
+}
+
+.time-row {
+  margin-top: 7px;
+  color: #a49aa7;
+  font-size: 10px;
+}
+
+.player-controls {
+  justify-content: center;
+  gap: 22px;
+  margin-top: 19px;
+}
+
+.player-controls button {
+  border: 0;
+}
+
+.subtle-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 42px;
+  min-height: 42px;
+  background: transparent;
+  color: #d1c5d6;
+  font-size: 22px;
+}
+
+.skip-button span {
+  font-size: 10px;
+}
+
+.play-button {
+  display: grid;
+  place-items: center;
+  width: 53px;
+  height: 53px;
+  border-radius: 50%;
+  background: #e9c9b3;
+  color: #30232d;
+  font-size: 18px;
+  box-shadow: 0 0 30px #edc2dc18;
+}
+
+.play-button:hover {
+  background: #f9dac5;
+}
+
+.player-note {
+  margin: 15px 0 0;
+  color: #988e9c;
+  text-align: center;
+  font-size: 10px;
+}
+
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.friends-card,
+.queue-card {
+  padding: 20px;
+}
+
+.section-heading {
+  gap: 10px;
+}
+
+.section-heading h3 {
+  margin: 6px 0 0;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+}
+
+.count-pill {
+  display: inline-grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 8px;
+  background: #332a3b;
+  color: #dec0ed;
+  font-size: 10px;
+}
+
+.tiny-wave {
+  color: #d9b6e8;
+  font-size: 24px;
+}
+
+.avatar-stack {
+  display: flex;
+  padding: 17px 0 12px 4px;
+}
+
+.avatar-stack .avatar {
+  width: 36px;
+  height: 36px;
+  margin-left: -4px;
+  border: 3px solid #1a181d;
+  box-sizing: content-box;
+}
+
+.avatar-maya {
+  background: #edbba6;
+  color: #4c2e29;
+}
+
+.avatar-ari {
+  background: #a8c7b3;
+  color: #203d2d;
+}
+
+.avatar-sam {
+  background: #e4ce88;
+  color: #473c1f;
+}
+
+.avatar-you {
+  background: #d5b5e6;
+  color: #35283d;
+}
+
+.friends-copy {
+  margin: 0;
+  color: #aaa1ad;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.friends-copy strong {
+  color: #f1e7f0;
+}
+
+.listening-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid #302b34;
+  color: #aaa1ad;
+  font-size: 9px;
+}
+
+.queue-count {
+  color: #aaa1ad;
+  font-size: 10px;
+}
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  margin: 20px 0;
+}
+
+.queue-item {
+  justify-content: flex-start;
+  gap: 9px;
+  min-width: 0;
+}
+
+.mini-cover {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border-radius: 11px;
+  color: #fff4eb;
+  font-size: 19px;
+}
+
+.queue-track {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.queue-track strong {
+  overflow: hidden;
+  color: #f0e7f1;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-track span,
+.track-duration {
+  color: #9a919e;
+  font-size: 9px;
+}
+
+.track-duration {
+  white-space: nowrap;
+}
+
+.added-by {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #37303e;
+  color: #e0c6ec;
+  font-size: 9px;
+}
+
+.add-track {
+  display: flex;
+  gap: 7px;
+  padding: 5px;
+  border: 1px solid #39333e;
+  border-radius: 12px;
+  background: #141216;
+}
+
+.add-track input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 7px;
+  border: 0;
+  background: transparent;
+  color: #f5edf7;
+  font-size: 10px;
+}
+
+.add-track input::placeholder {
+  color: #887f8c;
+}
+
+.add-track button {
+  width: 34px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 9px;
+  background: #d9b6e8;
+  color: #302236;
+  font-size: 21px;
+}
+
+.notice {
+  min-height: 14px;
+  margin: 10px 0 0;
+  color: #b1a2b7;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.room-footer {
+  gap: 10px;
+  padding: 2px 4px;
+  color: #89808c;
+  font-size: 9px;
+}
+
+.empty-state {
+  padding: 48px 10px;
+  text-align: center;
+}
+
+.empty-state p {
+  color: #aaa2ac;
+}
+
+.page-footer {
+  gap: 12px;
+  margin-top: 33px;
+  padding-top: 18px;
+  border-top: 1px solid #2b282e;
+  color: #89808c;
+  font-size: 10px;
+}
+
+@media (max-width: 780px) {
+  .app-shell {
+    width: calc(100% - 28px);
+    padding-top: 17px;
+  }
+
+  .topbar-note {
+    font-size: 0;
+  }
+
+  .welcome {
+    padding: 38px 0 26px;
+  }
+
+  .welcome h1 {
+    letter-spacing: -1.8px;
+  }
+
+  .room-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .player-panel {
+    padding: 17px;
+  }
+
+  .friends-card,
+  .queue-card {
+    padding: 18px;
+  }
+
+  .album-art {
+    aspect-ratio: 1.25;
+  }
+}
+
+@media (max-width: 380px) {
+  .invite-button {
+    padding: 9px;
+    font-size: 9px;
+  }
+
+  .room-heading h2 {
+    font-size: 20px;
+  }
+
+  .player-controls {
+    gap: 15px;
+  }
+}
