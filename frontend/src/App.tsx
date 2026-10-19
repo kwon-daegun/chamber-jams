@@ -1,21 +1,39 @@
-import { useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import "./App.css";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+
+type Room = {
+  id: string;
+  inviteCode: string;
+  name: string;
+  hostName: string;
+  listenerCount: number;
+  createdAt: string;
+};
+
+type TelegramProfile = {
+  telegramId: string;
+  firstName: string;
+  lastName: string | null;
+  username: string | null;
+  photoUrl: string | null;
+  languageCode: string | null;
+};
 
 type Track = {
   id: number;
   title: string;
   artist: string;
-  duration: string;
   symbol: string;
   cover: string;
 };
 
-const musicLibrary: Track[] = [
+const demoTracks: Track[] = [
   {
     id: 1,
     title: "Space Song",
     artist: "Beach House",
-    duration: "5:20",
     symbol: "☾",
     cover: "violet",
   },
@@ -23,7 +41,6 @@ const musicLibrary: Track[] = [
     id: 2,
     title: "Show Me How",
     artist: "Men I Trust",
-    duration: "3:35",
     symbol: "✳",
     cover: "sage",
   },
@@ -31,7 +48,6 @@ const musicLibrary: Track[] = [
     id: 3,
     title: "Glue Song",
     artist: "beabadoobee",
-    duration: "2:16",
     symbol: "♡",
     cover: "peach",
   },
@@ -39,74 +55,224 @@ const musicLibrary: Track[] = [
     id: 4,
     title: "Apocalypse",
     artist: "Cigarettes After Sex",
-    duration: "4:50",
     symbol: "✦",
     cover: "rose",
-  },
-  {
-    id: 5,
-    title: "Sunsetz",
-    artist: "Cigarettes After Sex",
-    duration: "3:35",
-    symbol: "☼",
-    cover: "sunset",
   },
 ];
 
 function App() {
-  const [queue, setQueue] = useState<Track[]>(musicLibrary.slice(0, 4));
-  const [playing, setPlaying] = useState(true);
-  const [search, setSearch] = useState("");
+  const [room, setRoom] = useState<Room | null>(null);
+  const [roomName, setRoomName] = useState("the after-hours room");
+
+  const initialTelegramInitData = window.Telegram?.WebApp?.initData ?? "";
+
+  const [telegramProfile, setTelegramProfile] =
+    useState<TelegramProfile | null>(null);
+
+  const [telegramAuthStatus, setTelegramAuthStatus] = useState<
+    "checking" | "verified" | "preview" | "failed"
+  >(initialTelegramInitData ? "checking" : "preview");
+
+  const [telegramAuthMessage, setTelegramAuthMessage] = useState(
+    initialTelegramInitData
+      ? "Checking Telegram identity..."
+      : "Preview mode. Open Chamber Jams inside Telegram to verify your identity.",
+  );
+
+  const [createHostName, setCreateHostName] = useState("");
+  const [joinHostName, setJoinHostName] = useState("");
+
+  useEffect(() => {
+    const webApp = window.Telegram?.WebApp;
+
+    webApp?.ready();
+    webApp?.expand();
+
+    if (!webApp?.initData) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function authenticateTelegramUser() {
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/telegram/validate`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            initData: webApp!.initData,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            response.status === 401
+              ? "Telegram authentication failed. Close and reopen the Mini App."
+              : `Authentication request failed (${response.status}).`,
+          );
+        }
+
+        const profile: TelegramProfile = await response.json();
+
+        if (cancelled) return;
+
+        setTelegramProfile(profile);
+        setTelegramAuthStatus("verified");
+        setTelegramAuthMessage(
+          `Telegram identity verified for ${profile.firstName}.`,
+        );
+
+        // Convenient defaults for the existing forms.
+        setCreateHostName(profile.firstName);
+        setJoinHostName(profile.firstName);
+      } catch (error) {
+        if (cancelled) return;
+
+        setTelegramAuthStatus("failed");
+        setTelegramAuthMessage(
+          error instanceof Error
+            ? error.message
+            : "Unable to verify your Telegram identity.",
+        );
+      }
+    }
+
+    void authenticateTelegramUser();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const [inviteCode, setInviteCode] = useState("");
+
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [joiningRoom, setJoiningRoom] = useState(false);
+  const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [queue, setQueue] = useState<Track[]>(demoTracks);
+  const [playing, setPlaying] = useState(false);
 
-  const currentTrack = queue[0];
+  async function readError(response: Response) {
+    const body = await response.text();
 
-  function skipSong() {
+    if (!body) {
+      return `Request failed (${response.status}).`;
+    }
+
+    try {
+      const parsed = JSON.parse(body);
+      return parsed.error ?? `Request failed (${response.status}).`;
+    } catch {
+      return body;
+    }
+  }
+
+  async function createRoom(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+
+    if (!roomName.trim() || !createHostName.trim()) {
+      setError("Enter a room name and your display name.");
+      return;
+    }
+
+    setCreatingRoom(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/rooms`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: roomName.trim(),
+          hostName: createHostName.trim(),
+        }),
+      });
+
+      if (!response.ok) throw new Error(await readError(response));
+
+      const createdRoom: Room = await response.json();
+      setRoom(createdRoom);
+      setNotice("Your room is ready. Invite your friends!");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't connect to Chamber Jams. Is the backend running?",
+      );
+    } finally {
+      setCreatingRoom(false);
+    }
+  }
+
+  async function joinRoom(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+
+    if (!joinHostName.trim() || !inviteCode.trim()) {
+      setError("Enter your display name and an invitation code.");
+      return;
+    }
+
+    setJoiningRoom(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/rooms/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inviteCode: inviteCode.trim() }),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          response.status === 404
+            ? "Room not found. Check the invitation code or ask your friend to create a new room."
+            : await readError(response),
+        );
+      }
+
+      const joinedRoom: Room = await response.json();
+      setRoom(joinedRoom);
+      setNotice(`You joined "${joinedRoom.name}". Welcome in!`);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't connect to Chamber Jams. Is the backend running?",
+      );
+    } finally {
+      setJoiningRoom(false);
+    }
+  }
+
+  async function copyInviteCode() {
+    if (!room) return;
+
+    try {
+      await navigator.clipboard.writeText(room.inviteCode);
+      setNotice("Invitation code copied. Send it to your group chat!");
+    } catch {
+      setNotice(
+        `Share this invitation code with your friends: ${room.inviteCode}`,
+      );
+    }
+  }
+
+  function skipDemoSong() {
     setQueue((current) =>
       current.length > 1 ? [...current.slice(1), current[0]] : current,
     );
-    setPlaying(true);
-    setNotice("Ready for the next song ✨");
+    setNotice("Demo queue updated. Shared Skip is our next backend feature.");
   }
 
-  function addSong(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const query = search.trim().toLowerCase();
-
-    if (!query) {
-      setNotice("Type a song title or artist first.");
-      return;
-    }
-
-    const match = musicLibrary.find((track) =>
-      `${track.title} ${track.artist}`.toLowerCase().includes(query),
-    );
-
-    if (!match) {
-      setNotice("No match in our demo library. Try another search.");
-      return;
-    }
-
-    if (queue.some((track) => track.id === match.id)) {
-      setNotice("That song is already in the room.");
-      return;
-    }
-
-    setQueue((current) => [...current, match]);
-    setSearch("");
-    setNotice(`Added "${match.title}" to the queue ♡`);
-  }
-
-  async function inviteFriends() {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setNotice("Page link copied! Real room invites come in a later step.");
-    } catch {
-      setNotice(
-        "Room invitations will be available when we connect the backend.",
-      );
-    }
+  function leaveRoom() {
+    setRoom(null);
+    setError("");
+    setNotice("");
   }
 
   return (
@@ -121,216 +287,236 @@ function App() {
 
         <div className="topbar-note">
           <span className="online-dot" />
-          your people are your playlist
-          <div className="profile-avatar">Y</div>
+          made for Chatting Chamber
         </div>
       </header>
 
-      <section className="welcome">
-        <p className="eyebrow">MADE FOR CHATTING CHAMBER</p>
-        <h1>
-          Good music.
-          <br />
-          <span>Better together.</span>
-        </h1>
-        <p className="welcome-copy">
-          For the songs you send at 2 AM, and the friends who just get it.
-        </p>
-      </section>
+      <div
+        className={`auth-status auth-status--${telegramAuthStatus}`}
+        role="status"
+      >
+        {telegramAuthStatus === "verified" && telegramProfile ? (
+          <span>
+            Telegram identity verified for{" "}
+            <strong>{telegramProfile.firstName}</strong>.
+          </span>
+        ) : (
+          <span>{telegramAuthMessage}</span>
+        )}
+      </div>
 
-      <section className="room-layout">
-        <div className="player-panel">
-          <div className="room-heading">
-            <div>
-              <div className="room-kicker">
-                <span className="live-dot" />
-                YOUR LISTENING ROOM
-              </div>
-              <h2>the after-hours room</h2>
-              <p className="muted">no plans, just one more song</p>
-            </div>
+      {!room ? (
+        <>
+          <section className="welcome">
+            <p className="eyebrow">YOUR GROUP'S LITTLE MUSIC CORNER</p>
+            <h1>
+              Good music.
+              <br />
+              <span>Better together.</span>
+            </h1>
+            <p className="welcome-copy">
+              Create a room, invite your people, and decide what plays next.
+            </p>
+          </section>
 
-            <button className="invite-button" onClick={inviteFriends}>
-              ↗ Invite friends
-            </button>
-          </div>
-
-          {currentTrack ? (
-            <>
-              <div className={`album-art ${currentTrack.cover}`}>
-                <span className="album-spark spark-one">✳</span>
-                <span className="album-symbol">{currentTrack.symbol}</span>
-                <span className="album-spark spark-two">✦</span>
-                <span className="album-caption">A SOUNDTRACK FOR US</span>
-              </div>
-
-              <div className="now-playing">
-                <div className="track-info">
-                  <p className="eyebrow">ON REPEAT WITH EVERYONE</p>
-                  <h2>{currentTrack.title}</h2>
-                  <p className="muted">{currentTrack.artist}</p>
-                </div>
-
-                <button
-                  className="like-button"
-                  aria-label="Save favourite"
-                  onClick={() => setNotice("Saved to favourites (demo) ♡")}
-                >
-                  ♡
-                </button>
-              </div>
-
-              <div className="progress-track">
-                <span className="progress-fill" />
-              </div>
-
-              <div className="time-row">
-                <span>1:24</span>
-                <span>{currentTrack.duration}</span>
-              </div>
-
-              <div className="player-controls">
-                <button
-                  className="subtle-control"
-                  aria-label="Previous song"
-                  onClick={() => {
-                    setQueue((current) =>
-                      current.length > 1
-                        ? [current[current.length - 1], ...current.slice(0, -1)]
-                        : current,
-                    );
-                    setPlaying(true);
-                    setNotice("Went back to the previous song.");
-                  }}
-                >
-                  ↶
-                </button>
-
-                <button
-                  className="play-button"
-                  aria-label={
-                    playing ? "Pause demo player" : "Play demo player"
-                  }
-                  onClick={() => {
-                    setPlaying((value) => !value);
-                    setNotice(
-                      "Demo control only — audio playback comes later.",
-                    );
-                  }}
-                >
-                  {playing ? "Ⅱ" : "▶"}
-                </button>
-
-                <button
-                  className="subtle-control skip-button"
-                  onClick={skipSong}
-                >
-                  <span>Skip song</span> ↠
-                </button>
-              </div>
-
-              <p className="player-note">
-                {playing ? "♫" : "Ⅱ"} we're all listening together
+          <section className="lobby-grid">
+            <article className="lobby-card">
+              <div className="lobby-icon">♫</div>
+              <p className="eyebrow">START THE VIBE</p>
+              <h2>Create a room</h2>
+              <p className="muted">
+                Give your listening room a name and invite your friends.
               </p>
-            </>
-          ) : (
-            <div className="empty-state">
-              <h2>Your room is waiting for a song.</h2>
-              <p>Search the demo library to start the queue.</p>
-            </div>
-          )}
-        </div>
 
-        <aside className="side-panel">
-          <section className="friends-card">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">YOUR FAVOURITE PEOPLE</p>
-                <h3>
-                  In the room <span className="count-pill">4</span>
-                </h3>
-              </div>
-              <span className="tiny-wave">♫</span>
-            </div>
+              <form className="lobby-form" onSubmit={createRoom}>
+                <label className="field-label" htmlFor="roomName">
+                  Room name
+                </label>
+                <input
+                  id="roomName"
+                  className="room-input"
+                  value={roomName}
+                  onChange={(event) => setRoomName(event.target.value)}
+                  maxLength={60}
+                  required
+                />
 
-            <div className="avatar-stack" aria-label="Demo listeners">
-              <div className="avatar avatar-maya">M</div>
-              <div className="avatar avatar-ari">A</div>
-              <div className="avatar avatar-sam">S</div>
-              <div className="avatar avatar-you">Y</div>
-            </div>
+                <label className="field-label" htmlFor="createHostName">
+                  Your display name
+                </label>
+                <input
+                  id="createHostName"
+                  className="room-input"
+                  value={createHostName}
+                  onChange={(event) => setCreateHostName(event.target.value)}
+                  placeholder="What should friends call you?"
+                  maxLength={40}
+                  required
+                />
 
-            <p className="friends-copy">
-              <strong>Maya, Ari, Sam</strong> and you are sharing this moment.
-            </p>
+                <button
+                  className="primary-action"
+                  type="submit"
+                  disabled={creatingRoom}
+                >
+                  {creatingRoom
+                    ? "Creating room..."
+                    : "＋ Create listening room"}
+                </button>
+              </form>
+            </article>
 
-            <div className="listening-status">
-              <span className="online-dot" />
-              here for the music, staying for the people
-            </div>
+            <article className="lobby-card">
+              <div className="lobby-icon lobby-icon-alt">↗</div>
+              <p className="eyebrow">YOUR FRIENDS ARE HERE</p>
+              <h2>Join a room</h2>
+              <p className="muted">
+                Got a code from someone in Chatting Chamber? Come on in.
+              </p>
+
+              <form className="lobby-form" onSubmit={joinRoom}>
+                <label className="field-label" htmlFor="joinHostName">
+                  Your display name
+                </label>
+                <input
+                  id="joinHostName"
+                  className="room-input"
+                  value={joinHostName}
+                  onChange={(event) => setJoinHostName(event.target.value)}
+                  placeholder="What should friends call you?"
+                  maxLength={40}
+                  required
+                />
+
+                <label className="field-label" htmlFor="inviteCode">
+                  Invitation code
+                </label>
+                <input
+                  id="inviteCode"
+                  className="room-input invite-input"
+                  value={inviteCode}
+                  onChange={(event) =>
+                    setInviteCode(event.target.value.toUpperCase())
+                  }
+                  placeholder="e.g. 23FECB8F"
+                  maxLength={8}
+                  autoCapitalize="characters"
+                  required
+                />
+
+                <button
+                  className="secondary-action"
+                  type="submit"
+                  disabled={joiningRoom}
+                >
+                  {joiningRoom ? "Joining room..." : "Join listening room →"}
+                </button>
+              </form>
+            </article>
           </section>
 
-          <section className="queue-card">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">A LITTLE BIT OF EVERYONE</p>
-                <h3>Up next</h3>
-              </div>
-              <span className="queue-count">{queue.length} songs</span>
-            </div>
+          <p className="room-footer">
+            No ads in our interface. Just friends, music, and shared moments.
+          </p>
+        </>
+      ) : (
+        <>
+          <section className="welcome room-welcome">
+            <p className="eyebrow">YOU'RE IN THE ROOM ♡</p>
+            <h1>
+              {room.name}
+              <br />
+              <span>the vibe starts here.</span>
+            </h1>
+            <p className="welcome-copy">
+              Room host: {room.hostName} · {room.listenerCount} listener
+              {room.listenerCount === 1 ? "" : "s"}
+            </p>
+          </section>
 
-            <div className="queue-list">
-              {queue.slice(1, 5).map((track, index) => (
-                <div className="queue-item" key={track.id}>
-                  <div className={`mini-cover ${track.cover}`}>
-                    {track.symbol}
-                  </div>
-
-                  <div className="queue-track">
-                    <strong>{track.title}</strong>
-                    <span>{track.artist}</span>
-                  </div>
-
-                  <span className="track-duration">{track.duration}</span>
-
-                  <span className="added-by">
-                    {["M", "A", "S", "Y"][index % 4]}
-                  </span>
-                </div>
-              ))}
-
-              {queue.length <= 1 && (
-                <p className="muted">The queue is clear. Add a song below.</p>
-              )}
-            </div>
-
-            <form className="add-track" onSubmit={addSong}>
-              <input
-                aria-label="Search demo music"
-                placeholder="Try “Sunsetz” or an artist..."
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-              <button type="submit" aria-label="Add song">
-                ＋
+          <section className="room-active-grid">
+            <article className="lobby-card room-invite-card">
+              <p className="eyebrow">BRING YOUR PEOPLE</p>
+              <h2>Your invitation code</h2>
+              <p className="muted">
+                Share this code in Chatting Chamber so your friends can find the
+                room.
+              </p>
+              <button className="room-code" onClick={copyInviteCode}>
+                <span>{room.inviteCode}</span>
+                <span aria-hidden="true">⧉</span>
               </button>
-            </form>
+              <p className="muted room-id">Room ID: {room.id}</p>
+              <button className="secondary-action" onClick={leaveRoom}>
+                ← Back to rooms
+              </button>
+            </article>
 
-            <p className="notice" role="status">
-              {notice || "Everyone gets a say in what plays next."}
-            </p>
+            <article className="lobby-card">
+              <p className="eyebrow">A LITTLE BIT OF EVERYONE</p>
+              <h2>Now playing together</h2>
+              <p className="muted">
+                This is still the demo player. Real music playback and shared
+                queue synchronization come next.
+              </p>
+
+              <div className={`room-demo-art ${queue[0]?.cover ?? "violet"}`}>
+                <span>{queue[0]?.symbol ?? "♫"}</span>
+              </div>
+
+              <h3 className="demo-track-title">
+                {queue[0]?.title ?? "No song queued"}
+              </h3>
+              <p className="muted">
+                {queue[0]?.artist ?? "Add a song to begin"}
+              </p>
+
+              <div className="demo-controls">
+                <button
+                  className="secondary-action"
+                  onClick={() => setPlaying((value) => !value)}
+                >
+                  {playing ? "Ⅱ Pause demo" : "▶ Play demo"}
+                </button>
+                <button className="primary-action" onClick={skipDemoSong}>
+                  Skip song ↠
+                </button>
+              </div>
+
+              <div className="demo-queue">
+                <p className="eyebrow">UP NEXT</p>
+                {queue.slice(1).map((track) => (
+                  <div className="demo-queue-item" key={track.id}>
+                    <span>{track.symbol}</span>
+                    <span>
+                      {track.title} · {track.artist}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </article>
           </section>
 
-          <div className="room-footer">
-            <span>♡ made for the group chat</span>
-            <span>NO ADS. JUST VIBES.</span>
-          </div>
-        </aside>
-      </section>
+          <button className="text-action" onClick={leaveRoom}>
+            Leave this room
+          </button>
+        </>
+      )}
+
+      {error && (
+        <p className="error-message" role="alert">
+          {error}
+        </p>
+      )}
+      {notice && (
+        <p className="success-message" role="status">
+          {notice}
+        </p>
+      )}
 
       <footer className="page-footer">
         <span>Chamber Jams © 2026</span>
-        <span>your people. your playlist.</span>
+        <span>Your people. Your playlist.</span>
       </footer>
     </main>
   );
