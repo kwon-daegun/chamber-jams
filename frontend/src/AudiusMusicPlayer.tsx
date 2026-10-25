@@ -320,6 +320,7 @@ export default function AudiusMusicPlayer({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "X-Telegram-Init-Data": telegramInitData,
         },
       };
 

@@ -245,6 +245,13 @@ public class RoomService {
                 .anyMatch(member -> member.isActiveAt(cutoff));
     }
 
+    @Transactional(readOnly = true)
+    public void assertCurrentMember(
+            String roomId,
+            TelegramProfile profile) {
+        requireCurrentMember(roomId, profile);
+    }
+
     private RoomMember requireCurrentMember(
             String roomId, TelegramProfile profile) {
 
