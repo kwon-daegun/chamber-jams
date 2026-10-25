@@ -1,4 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type SyntheticEvent } from "react";
+import AudiusMusicPlayer from "./AudiusMusicPlayer";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
@@ -21,44 +22,11 @@ type TelegramProfile = {
   languageCode: string | null;
 };
 
-type Track = {
-  id: number;
-  title: string;
-  artist: string;
-  symbol: string;
-  cover: string;
+type PublicRoom = {
+  id: string;
+  name: string;
+  playing: boolean;
 };
-
-const demoTracks: Track[] = [
-  {
-    id: 1,
-    title: "Space Song",
-    artist: "Beach House",
-    symbol: "☾",
-    cover: "violet",
-  },
-  {
-    id: 2,
-    title: "Show Me How",
-    artist: "Men I Trust",
-    symbol: "✳",
-    cover: "sage",
-  },
-  {
-    id: 3,
-    title: "Glue Song",
-    artist: "beabadoobee",
-    symbol: "♡",
-    cover: "peach",
-  },
-  {
-    id: 4,
-    title: "Apocalypse",
-    artist: "Cigarettes After Sex",
-    symbol: "✦",
-    cover: "rose",
-  },
-];
 
 function App() {
   const [room, setRoom] = useState<Room | null>(null);
@@ -78,9 +46,6 @@ function App() {
       ? "Checking Telegram identity..."
       : "Preview mode. Open Chamber Jams inside Telegram to verify your identity.",
   );
-
-  const [createHostName, setCreateHostName] = useState("");
-  const [joinHostName, setJoinHostName] = useState("");
 
   useEffect(() => {
     const webApp = window.Telegram?.WebApp;
@@ -125,8 +90,6 @@ function App() {
         );
 
         // Convenient defaults for the existing forms.
-        setCreateHostName(profile.firstName);
-        setJoinHostName(profile.firstName);
       } catch (error) {
         if (cancelled) return;
 
@@ -150,10 +113,55 @@ function App() {
 
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [joiningRoom, setJoiningRoom] = useState(false);
+
+  const [activeRooms, setActiveRooms] = useState<PublicRoom[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(true);
+  const [roomsDirectoryError, setRoomsDirectoryError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadActiveRooms() {
+      try {
+        const response = await fetch(`${API_BASE}/api/rooms/active`);
+
+        if (!response.ok) {
+          throw new Error("Unable to load listening rooms.");
+        }
+
+        const rooms = (await response.json()) as PublicRoom[];
+
+        if (!cancelled) {
+          setActiveRooms(rooms);
+          setRoomsDirectoryError("");
+        }
+      } catch {
+        if (!cancelled) {
+          setRoomsDirectoryError(
+            "Couldn't load rooms. Check the backend connection.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setRoomsLoading(false);
+        }
+      }
+    }
+
+    void loadActiveRooms();
+
+    const timer = window.setInterval(() => {
+      void loadActiveRooms();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [queue, setQueue] = useState<Track[]>(demoTracks);
-  const [playing, setPlaying] = useState(false);
 
   async function readError(response: Response) {
     const body = await response.text();
@@ -170,13 +178,20 @@ function App() {
     }
   }
 
-  async function createRoom(event: FormEvent<HTMLFormElement>) {
+  async function createRoom(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setNotice("");
 
-    if (!roomName.trim() || !createHostName.trim()) {
-      setError("Enter a room name and your display name.");
+    const initData = window.Telegram?.WebApp?.initData ?? "";
+
+    if (!roomName.trim()) {
+      setError("Enter a room name.");
+      return;
+    }
+
+    if (telegramAuthStatus !== "verified" || !initData) {
+      setError("Open Chamber Jams inside Telegram to create a room.");
       return;
     }
 
@@ -188,7 +203,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: roomName.trim(),
-          hostName: createHostName.trim(),
+          initData,
         }),
       });
 
@@ -208,13 +223,21 @@ function App() {
     }
   }
 
-  async function joinRoom(event: FormEvent<HTMLFormElement>) {
+  async function joinRoom(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setNotice("");
 
-    if (!joinHostName.trim() || !inviteCode.trim()) {
-      setError("Enter your display name and an invitation code.");
+    const initData = window.Telegram?.WebApp?.initData ?? "";
+    const normalizedInviteCode = extractInviteCode(inviteCode);
+
+    if (!normalizedInviteCode) {
+      setError("Enter a valid invitation code or a supported invite link.");
+      return;
+    }
+
+    if (telegramAuthStatus !== "verified" || !initData) {
+      setError("Open Chamber Jams inside Telegram to join a room.");
       return;
     }
 
@@ -224,7 +247,10 @@ function App() {
       const response = await fetch(`${API_BASE}/api/rooms/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inviteCode: inviteCode.trim() }),
+        body: JSON.stringify({
+          inviteCode: normalizedInviteCode,
+          initData,
+        }),
       });
 
       if (!response.ok) {
@@ -249,6 +275,43 @@ function App() {
     }
   }
 
+  async function joinListedRoom(roomId: string) {
+    setError("");
+    setNotice("");
+
+    const initData = window.Telegram?.WebApp?.initData ?? "";
+
+    if (telegramAuthStatus !== "verified" || !initData) {
+      setError("Open Chamber Jams inside Telegram to join a room.");
+      return;
+    }
+
+    setJoiningRoom(true);
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/rooms/${encodeURIComponent(roomId)}/join`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData }),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(await readError(response));
+      }
+
+      const joinedRoom: Room = await response.json();
+      setRoom(joinedRoom);
+      setNotice(`You joined "${joinedRoom.name}". Welcome in!`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't join this room.");
+    } finally {
+      setJoiningRoom(false);
+    }
+  }
+
   async function copyInviteCode() {
     if (!room) return;
 
@@ -260,13 +323,6 @@ function App() {
         `Share this invitation code with your friends: ${room.inviteCode}`,
       );
     }
-  }
-
-  function skipDemoSong() {
-    setQueue((current) =>
-      current.length > 1 ? [...current.slice(1), current[0]] : current,
-    );
-    setNotice("Demo queue updated. Shared Skip is our next backend feature.");
   }
 
   function leaveRoom() {
@@ -341,19 +397,6 @@ function App() {
                   required
                 />
 
-                <label className="field-label" htmlFor="createHostName">
-                  Your display name
-                </label>
-                <input
-                  id="createHostName"
-                  className="room-input"
-                  value={createHostName}
-                  onChange={(event) => setCreateHostName(event.target.value)}
-                  placeholder="What should friends call you?"
-                  maxLength={40}
-                  required
-                />
-
                 <button
                   className="primary-action"
                   type="submit"
@@ -375,19 +418,6 @@ function App() {
               </p>
 
               <form className="lobby-form" onSubmit={joinRoom}>
-                <label className="field-label" htmlFor="joinHostName">
-                  Your display name
-                </label>
-                <input
-                  id="joinHostName"
-                  className="room-input"
-                  value={joinHostName}
-                  onChange={(event) => setJoinHostName(event.target.value)}
-                  placeholder="What should friends call you?"
-                  maxLength={40}
-                  required
-                />
-
                 <label className="field-label" htmlFor="inviteCode">
                   Invitation code
                 </label>
@@ -415,92 +445,83 @@ function App() {
             </article>
           </section>
 
+          <section className="public-rooms-section">
+            <div className="public-rooms-heading">
+              <div>
+                <p className="eyebrow">YOUR GROUP'S LITTLE MUSIC CORNER</p>
+                <h2>Listening rooms</h2>
+                <p className="muted">
+                  Find a room that's active and join the vibe.
+                </p>
+              </div>
+              <span className="public-room-total">
+                {activeRooms.filter((room) => room.playing).length} playing
+              </span>
+            </div>
+
+            {roomsLoading ? (
+              <p className="muted">Finding active rooms…</p>
+            ) : roomsDirectoryError ? (
+              <p className="muted" role="status">
+                {roomsDirectoryError}
+              </p>
+            ) : activeRooms.length === 0 ? (
+              <div className="public-room-empty">
+                <span aria-hidden="true">♫</span>
+                <h3>No active rooms just yet</h3>
+                <p className="muted">
+                  Create a room or join one using an invitation code or link.
+                </p>
+              </div>
+            ) : (
+              <div className="public-room-grid">
+                {activeRooms.map((publicRoom) => (
+                  <article
+                    className="lobby-card public-room-card"
+                    key={publicRoom.id}
+                  >
+                    <div className="lobby-icon">♫</div>
+
+                    <div className="public-room-card-copy">
+                      <h3>{publicRoom.name}</h3>
+                      <p className="muted">
+                        <span
+                          className={`online-dot ${
+                            publicRoom.playing ? "" : "public-room-dot-idle"
+                          }`}
+                        />
+                        {publicRoom.playing ? "Playing now" : "Room active"}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="primary-action public-room-join"
+                      disabled={joiningRoom}
+                      onClick={() => void joinListedRoom(publicRoom.id)}
+                    >
+                      {joiningRoom ? "Joining…" : "Join →"}
+                    </button>
+                  </article>
+                ))}
+              </div>
+            )}
+
+            <p className="public-rooms-privacy">
+              Room members stay private. Join a room to see who's listening.
+            </p>
+          </section>
+
           <p className="room-footer">
             No ads in our interface. Just friends, music, and shared moments.
           </p>
         </>
       ) : (
-        <>
-          <section className="welcome room-welcome">
-            <p className="eyebrow">YOU'RE IN THE ROOM ♡</p>
-            <h1>
-              {room.name}
-              <br />
-              <span>the vibe starts here.</span>
-            </h1>
-            <p className="welcome-copy">
-              Room host: {room.hostName} · {room.listenerCount} listener
-              {room.listenerCount === 1 ? "" : "s"}
-            </p>
-          </section>
-
-          <section className="room-active-grid">
-            <article className="lobby-card room-invite-card">
-              <p className="eyebrow">BRING YOUR PEOPLE</p>
-              <h2>Your invitation code</h2>
-              <p className="muted">
-                Share this code in Chatting Chamber so your friends can find the
-                room.
-              </p>
-              <button className="room-code" onClick={copyInviteCode}>
-                <span>{room.inviteCode}</span>
-                <span aria-hidden="true">⧉</span>
-              </button>
-              <p className="muted room-id">Room ID: {room.id}</p>
-              <button className="secondary-action" onClick={leaveRoom}>
-                ← Back to rooms
-              </button>
-            </article>
-
-            <article className="lobby-card">
-              <p className="eyebrow">A LITTLE BIT OF EVERYONE</p>
-              <h2>Now playing together</h2>
-              <p className="muted">
-                This is still the demo player. Real music playback and shared
-                queue synchronization come next.
-              </p>
-
-              <div className={`room-demo-art ${queue[0]?.cover ?? "violet"}`}>
-                <span>{queue[0]?.symbol ?? "♫"}</span>
-              </div>
-
-              <h3 className="demo-track-title">
-                {queue[0]?.title ?? "No song queued"}
-              </h3>
-              <p className="muted">
-                {queue[0]?.artist ?? "Add a song to begin"}
-              </p>
-
-              <div className="demo-controls">
-                <button
-                  className="secondary-action"
-                  onClick={() => setPlaying((value) => !value)}
-                >
-                  {playing ? "Ⅱ Pause demo" : "▶ Play demo"}
-                </button>
-                <button className="primary-action" onClick={skipDemoSong}>
-                  Skip song ↠
-                </button>
-              </div>
-
-              <div className="demo-queue">
-                <p className="eyebrow">UP NEXT</p>
-                {queue.slice(1).map((track) => (
-                  <div className="demo-queue-item" key={track.id}>
-                    <span>{track.symbol}</span>
-                    <span>
-                      {track.title} · {track.artist}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </article>
-          </section>
-
-          <button className="text-action" onClick={leaveRoom}>
-            Leave this room
-          </button>
-        </>
+        <AudiusMusicPlayer
+          room={room}
+          onInviteClick={copyInviteCode}
+          onLeaveRoom={leaveRoom}
+        />
       )}
 
       {error && (
@@ -520,6 +541,32 @@ function App() {
       </footer>
     </main>
   );
+}
+
+function extractInviteCode(input: string): string | null {
+  const value = input.trim();
+  let candidate = value;
+
+  try {
+    const normalizedUrl = /^t\.me\//i.test(value) ? `https://${value}` : value;
+
+    if (/^https?:\/\//i.test(normalizedUrl)) {
+      const url = new URL(normalizedUrl);
+
+      candidate =
+        url.searchParams.get("startapp") ??
+        url.searchParams.get("start") ??
+        url.searchParams.get("inviteCode") ??
+        url.searchParams.get("code") ??
+        url.pathname.split("/").filter(Boolean).pop() ??
+        "";
+    }
+  } catch {
+    return null;
+  }
+
+  const match = candidate.toUpperCase().match(/[A-F0-9]{8}/);
+  return match ? match[0] : null;
 }
 
 export default App;
