@@ -37,6 +37,8 @@ jobs:
       - name: Build frontend
         run: npm run build
         working-directory: frontend
+        env:
+          VITE_API_BASE_URL: https://chamber-jams.onrender.com
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
