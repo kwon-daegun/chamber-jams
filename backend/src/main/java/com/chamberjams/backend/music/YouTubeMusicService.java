@@ -3,6 +3,7 @@ package com.chamberjams.backend.music;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -12,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,7 +35,8 @@ public class YouTubeMusicService {
     private final Path cacheDir = Paths.get("audio_cache").toAbsolutePath();
     private final ConcurrentHashMap<String, CompletableFuture<File>> activeDownloads = new ConcurrentHashMap<>();
     private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
+            .followRedirects(HttpClient.Redirect.ALWAYS)
+            .connectTimeout(Duration.ofSeconds(12))
             .build();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -61,7 +64,7 @@ public class YouTubeMusicService {
                         "clientName", "WEB",
                         "clientVersion", "2.20250101.00.00",
                         "hl", "en",
-                        "gl", "US"
+                        "gl", "IN"
                     )
                 ),
                 "query", query
@@ -111,7 +114,7 @@ public class YouTubeMusicService {
                 }
                 int durationSeconds = parseColonDuration(lengthText);
                 if (durationSeconds <= 0) {
-                    durationSeconds = 210; 
+                    durationSeconds = 210;
                 }
                 if (durationSeconds > 3600) {
                     continue;
@@ -221,14 +224,14 @@ public class YouTubeMusicService {
         }
 
         File cachedFile = cacheDir.resolve(videoId + ".m4a").toFile();
-        if (cachedFile.exists() && cachedFile.length() > 0) {
+        if (cachedFile.exists() && cachedFile.length() > 1024) {
             return cachedFile;
         }
 
         CompletableFuture<File> future = activeDownloads.computeIfAbsent(videoId, id ->
                 CompletableFuture.supplyAsync(() -> {
                     try {
-                        return downloadWithYtDlp(id);
+                        return downloadAudioWithFallbacks(id);
                     } catch (Exception e) {
                         throw new RuntimeException("Failed to extract audio for " + id, e);
                     } finally {
@@ -237,50 +240,131 @@ public class YouTubeMusicService {
                 })
         );
 
-        return future.get(60, TimeUnit.SECONDS);
+        return future.get(90, TimeUnit.SECONDS);
     }
 
-    private File downloadWithYtDlp(String videoId) throws IOException, InterruptedException {
+    private File downloadAudioWithFallbacks(String videoId) throws Exception {
         File targetFile = cacheDir.resolve(videoId + ".m4a").toFile();
         String outputTemplate = cacheDir.resolve(videoId + ".%(ext)s").toString();
         String url = "https://www.youtube.com/watch?v=" + videoId;
 
-        ProcessBuilder pb = new ProcessBuilder(
-                "yt-dlp",
-                "-f", "bestaudio[ext=m4a]/140/bestaudio",
-                "--extractor-args", "youtube:player_client=android,ios,web",
-                "--no-playlist",
-                "--geo-bypass",
-                "--no-warnings",
-                "-o", outputTemplate,
-                url
-        );
-        pb.redirectErrorStream(true);
+        String[] clientProfiles = {
+            "youtube:player_client=tv,ios,mweb",
+            "youtube:player_client=android_vr,android,web"
+        };
 
-        Process process = pb.start();
-        StringBuilder outputLog = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                outputLog.append(line).append("\n");
+        for (String profile : clientProfiles) {
+            ProcessBuilder pb = new ProcessBuilder(
+                    "yt-dlp",
+                    "-f", "140/bestaudio[ext=m4a]/bestaudio",
+                    "-x",
+                    "--audio-format", "m4a",
+                    "--extractor-args", profile,
+                    "--no-playlist",
+                    "--geo-bypass",
+                    "--no-check-certificates",
+                    "--no-warnings",
+                    "-o", outputTemplate,
+                    url
+            );
+            pb.redirectErrorStream(true);
+
+            Process process = pb.start();
+            StringBuilder outputLog = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    outputLog.append(line).append("\n");
+                }
+            }
+
+            boolean finished = process.waitFor(50, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+            }
+
+            if (targetFile.exists() && targetFile.length() > 1024) {
+                System.out.println("yt-dlp success (" + profile + ") for " + videoId);
+                return targetFile;
+            }
+            System.err.println("yt-dlp attempt (" + profile + ") failed for " + videoId + ":\n" + outputLog);
+        }
+
+        // Fallback to Piped / Invidious APIs if YouTube blocks datacenter IP
+        File fallback = downloadViaPublicApis(videoId, targetFile);
+        if (fallback != null) {
+            return fallback;
+        }
+
+        throw new IOException("All audio extraction methods failed for videoId: " + videoId);
+    }
+
+    private File downloadViaPublicApis(String videoId, File targetFile) {
+        String[] pipedApis = {
+            "https://pipedapi.kavin.rocks/streams/" + videoId,
+            "https://pipedapi.tokhmi.xyz/streams/" + videoId,
+            "https://api.piped.private.coffee/streams/" + videoId
+        };
+
+        for (String apiUrl : pipedApis) {
+            try {
+                HttpRequest req = HttpRequest.newBuilder()
+                        .uri(URI.create(apiUrl))
+                        .header("User-Agent", "Mozilla/5.0")
+                        .timeout(Duration.ofSeconds(10))
+                        .GET()
+                        .build();
+
+                HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+                if (res.statusCode() == 200) {
+                    JsonNode root = objectMapper.readTree(res.body());
+                    JsonNode audioStreams = root.path("audioStreams");
+                    if (audioStreams.isArray() && !audioStreams.isEmpty()) {
+                        String streamUrl = audioStreams.get(0).path("url").asText("");
+                        if (!streamUrl.isEmpty()) {
+                            if (downloadDirectStream(streamUrl, targetFile)) {
+                                System.out.println("Downloaded via Piped API (" + apiUrl + ") for " + videoId);
+                                return targetFile;
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("Public API fallback (" + apiUrl + ") error: " + e.getMessage());
             }
         }
+        return null;
+    }
 
-        boolean finished = process.waitFor(55, TimeUnit.SECONDS);
-        if (!finished || process.exitValue() != 0 || !targetFile.exists()) {
-            System.err.println("yt-dlp error output for " + videoId + ":\n" + outputLog);
-            throw new IOException("yt-dlp extraction failed for videoId: " + videoId);
+    private boolean downloadDirectStream(String streamUrl, File targetFile) {
+        try {
+            HttpRequest audioReq = HttpRequest.newBuilder()
+                    .uri(URI.create(streamUrl))
+                    .header("User-Agent", "Mozilla/5.0")
+                    .timeout(Duration.ofSeconds(40))
+                    .GET()
+                    .build();
+
+            HttpResponse<InputStream> audioRes = httpClient.send(audioReq, HttpResponse.BodyHandlers.ofInputStream());
+            if (audioRes.statusCode() == 200 || audioRes.statusCode() == 206) {
+                try (InputStream in = audioRes.body()) {
+                    Files.copy(in, targetFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                }
+                return targetFile.exists() && targetFile.length() > 1024;
+            }
+        } catch (Exception e) {
+            System.err.println("Direct stream download error: " + e.getMessage());
         }
-        return targetFile;
+        return false;
     }
 
     @Scheduled(fixedRate = 15 * 60 * 1000)
     public void cleanupOldCacheFiles() {
-        File[] files = cacheDir.toFile().listFiles((dir, name) -> name.endsWith(".m4a") || name.endsWith(".part"));
+        File[] files = cacheDir.toFile().listFiles((dir, name) -> name.endsWith(".m4a") || name.endsWith(".part") || name.endsWith(".webm") || name.endsWith(".opus"));
         if (files == null) return;
 
-        long cutoff = System.currentTimeMillis() - (30 * 60 * 1000L); // 30 minutes
+        long cutoff = System.currentTimeMillis() - (30 * 60 * 1000L);
         for (File file : files) {
             if (file.lastModified() < cutoff) {
                 file.delete();
