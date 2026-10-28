@@ -63,6 +63,14 @@ function formatDuration(seconds: number): string {
   return `${minutes}:${String(remaining).padStart(2, "0")}`;
 }
 
+// 1. ADDED: Converts "/api/music/stream/{videoId}" into "http://localhost:8080/api/music/stream/{videoId}"
+function resolveStreamUrl(streamUrl: string): string {
+  if (streamUrl.startsWith("http://") || streamUrl.startsWith("https://")) {
+    return streamUrl;
+  }
+  return `${API_BASE}${streamUrl.startsWith("/") ? "" : "/"}${streamUrl}`;
+}
+
 export default function AudiusMusicPlayer({
   room,
   onInviteClick,
@@ -191,7 +199,8 @@ export default function AudiusMusicPlayer({
 
     if (trackChanged) {
       audio.pause();
-      audio.src = current.streamUrl;
+      // 2. CHANGED: Resolve relative backend stream URL against API_BASE
+      audio.src = resolveStreamUrl(current.streamUrl);
       loadedTrackIdRef.current = current.id;
       setCurrentTime(snapshot.positionSeconds);
       setDuration(current.durationSeconds);
@@ -263,9 +272,15 @@ export default function AudiusMusicPlayer({
     }
   }, []);
 
+  // 3. CHANGED: Included X-Telegram-Init-Data header on GET /playback
   const refreshPlayback = useCallback(async () => {
     const response = await fetch(
       `${API_BASE}/api/rooms/${encodeURIComponent(room.id)}/playback`,
+      {
+        headers: {
+          "X-Telegram-Init-Data": telegramInitData,
+        },
+      },
     );
 
     if (!response.ok) {
@@ -274,8 +289,9 @@ export default function AudiusMusicPlayer({
 
     const snapshot = (await response.json()) as PlaybackSnapshot;
     applyPlaybackSnapshot(snapshot);
-  }, [room.id, applyPlaybackSnapshot]);
+  }, [room.id, telegramInitData, applyPlaybackSnapshot]);
 
+  // 4. CHANGED: Included X-Telegram-Init-Data header on the 1.5s polling loop
   useEffect(() => {
     let cancelled = false;
 
@@ -283,6 +299,11 @@ export default function AudiusMusicPlayer({
       try {
         const response = await fetch(
           `${API_BASE}/api/rooms/${encodeURIComponent(room.id)}/playback`,
+          {
+            headers: {
+              "X-Telegram-Init-Data": telegramInitData,
+            },
+          },
         );
 
         if (!response.ok) return;
@@ -307,7 +328,7 @@ export default function AudiusMusicPlayer({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [room.id, applyPlaybackSnapshot]);
+  }, [room.id, telegramInitData, applyPlaybackSnapshot]);
 
   async function updateSharedPlayback(
     path: string,
