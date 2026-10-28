@@ -199,7 +199,6 @@ export default function AudiusMusicPlayer({
 
     if (trackChanged) {
       audio.pause();
-      // 2. CHANGED: Resolve relative backend stream URL against API_BASE
       audio.src = resolveStreamUrl(current.streamUrl);
       loadedTrackIdRef.current = current.id;
       setCurrentTime(snapshot.positionSeconds);
