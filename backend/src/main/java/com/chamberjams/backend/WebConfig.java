@@ -10,10 +10,19 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
-            .allowedOrigins(
-                "http://localhost:5173"
+            .allowedOriginPatterns("*")
+            .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+            .allowedHeaders(
+                "Content-Type",
+                "X-Telegram-Init-Data",
+                "Range",
+                "Accept",
+                "Origin"
             )
-            .allowedMethods("GET", "POST", "OPTIONS")
-            .allowedHeaders("Content-Type");
+            .exposedHeaders(
+                "Content-Range",
+                "Accept-Ranges",
+                "Content-Length"
+            );
     }
 }

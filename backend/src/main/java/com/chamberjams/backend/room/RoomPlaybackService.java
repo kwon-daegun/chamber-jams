@@ -1,4 +1,3 @@
-
 package com.chamberjams.backend.room;
 
 import java.time.Duration;
@@ -10,7 +9,8 @@ import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.chamberjams.backend.music.AudiusSearchController.MusicTrack;
+import com.chamberjams.backend.music.YouTubeMusicController.MusicTrack;
+import com.chamberjams.backend.music.YouTubeMusicService;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -20,14 +20,17 @@ public class RoomPlaybackService {
     private final RoomRepository roomRepository;
     private final RoomPlaybackRepository playbackRepository;
     private final ObjectMapper objectMapper;
+    private final YouTubeMusicService youtubeMusicService;
 
     public RoomPlaybackService(
             RoomRepository roomRepository,
             RoomPlaybackRepository playbackRepository,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            YouTubeMusicService youtubeMusicService) {
         this.roomRepository = roomRepository;
         this.playbackRepository = playbackRepository;
         this.objectMapper = objectMapper;
+        this.youtubeMusicService = youtubeMusicService;
     }
 
     public record StoredPlayback(
@@ -160,6 +163,14 @@ public class RoomPlaybackService {
                         : state.queue().subList(
                                 1, state.queue().size());
 
+        // Pre-warm the track that starts playing AND the next one in queue
+        if (nextTrack != null) {
+            youtubeMusicService.prewarmAudioAsync(nextTrack.id());
+        }
+        if (!remainingQueue.isEmpty()) {
+            youtubeMusicService.prewarmAudioAsync(remainingQueue.get(0).id());
+        }
+
         StoredPlayback next = new StoredPlayback(
                 nextTrack,
                 rememberedTrack,
@@ -192,6 +203,8 @@ public class RoomPlaybackService {
                         .equals(state.previousTrack().id())) {
             nextQueue.add(0, state.currentTrack());
         }
+
+        youtubeMusicService.prewarmAudioAsync(state.previousTrack().id());
 
         StoredPlayback next = new StoredPlayback(
                 state.previousTrack(),
@@ -271,6 +284,11 @@ public class RoomPlaybackService {
                 state.queue().subList(
                         selectedIndex + 1, state.queue().size()));
 
+        youtubeMusicService.prewarmAudioAsync(selected.id());
+        if (!remainingQueue.isEmpty()) {
+            youtubeMusicService.prewarmAudioAsync(remainingQueue.get(0).id());
+        }
+
         StoredPlayback next = new StoredPlayback(
                 selected,
                 state.currentTrack(),
@@ -334,46 +352,58 @@ public class RoomPlaybackService {
             RoomPlaybackState row, Instant now) {
 
         StoredPlayback state = decode(row.getStateJson());
+        MusicTrack current = state.currentTrack();
+        MusicTrack previous = state.previousTrack();
+        List<MusicTrack> queue = new ArrayList<>(state.queue());
+        boolean playing = state.isPlaying();
         double position = state.positionSeconds();
 
-        if (state.isPlaying()
-                && state.currentTrack() != null
-                && row.getUpdatedAt() != null) {
-
+        if (playing && current != null && row.getUpdatedAt() != null) {
             double elapsed = Math.max(
                     0,
                     Duration.between(row.getUpdatedAt(), now)
                             .toMillis() / 1000.0);
-
             position += elapsed;
+
+            // Server-side auto-advance if song finished playing
+            while (current != null
+                    && current.durationSeconds() > 0
+                    && position >= current.durationSeconds() + 1.0) {
+                position -= current.durationSeconds();
+                previous = current;
+                if (!queue.isEmpty()) {
+                    current = queue.remove(0);
+                    youtubeMusicService.prewarmAudioAsync(current.id());
+                } else {
+                    current = null;
+                    playing = false;
+                    position = 0;
+                }
+            }
         }
 
-        if (state.currentTrack() != null
-                && state.currentTrack().durationSeconds() > 0) {
-            position = Math.min(
-                    position,
-                    state.currentTrack().durationSeconds());
+        if (current != null && current.durationSeconds() > 0) {
+            position = Math.min(position, current.durationSeconds());
         }
 
         return new StoredPlayback(
-                state.currentTrack(),
-                state.previousTrack(),
-                state.queue(),
-                state.isPlaying(),
+                current,
+                previous,
+                queue,
+                playing,
                 position);
     }
 
     private void validateTrack(MusicTrack track) {
         if (track == null
                 || track.id() == null
-                || track.id().isBlank()
+                || !track.id().matches("^[a-zA-Z0-9_-]{11}$")
                 || track.title() == null
                 || track.artist() == null
                 || track.streamUrl() == null
-                || !track.streamUrl().startsWith(
-                        "https://api.audius.co/v1/tracks/")) {
+                || !track.streamUrl().startsWith("/api/music/stream/")) {
             throw new IllegalArgumentException(
-                    "A valid Audius track is required.");
+                    "A valid YouTube track is required.");
         }
     }
 

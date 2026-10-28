@@ -1,4 +1,3 @@
-
 package com.chamberjams.backend.room;
 
 import java.util.Map;
@@ -15,7 +14,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.chamberjams.backend.auth.TelegramAuthController.TelegramProfile;
 import com.chamberjams.backend.auth.TelegramIdentityService;
-import com.chamberjams.backend.music.AudiusSearchController.MusicTrack;
+import com.chamberjams.backend.music.YouTubeMusicController.MusicTrack;
+import com.chamberjams.backend.music.YouTubeMusicService;
+import com.chamberjams.backend.music.YouTubeMusicService;
 import com.chamberjams.backend.room.RoomPlaybackService.PlaybackSnapshot;
 
 @RestController
@@ -25,14 +26,17 @@ public class RoomPlaybackController {
     private final RoomPlaybackService playbackService;
     private final TelegramIdentityService identityService;
     private final RoomService roomService;
+    private final YouTubeMusicService youtubeMusicService;
 
     public RoomPlaybackController(
             RoomPlaybackService playbackService,
             TelegramIdentityService identityService,
-            RoomService roomService) {
+            RoomService roomService,
+            YouTubeMusicService youtubeMusicService) {
         this.playbackService = playbackService;
         this.identityService = identityService;
         this.roomService = roomService;
+        this.youtubeMusicService = youtubeMusicService;
     }
 
     private ResponseEntity<?> authorizationError(
@@ -75,11 +79,14 @@ public class RoomPlaybackController {
                     name = "X-Telegram-Init-Data",
                     required = false) String initData,
             @RequestBody(required = false) MusicTrack track) {
-
+        
         ResponseEntity<?> denied = authorizationError(roomId, initData);
         if (denied != null) return denied;
 
         try {
+            if (track != null && track.id() != null) {
+                youtubeMusicService.prewarmAudioAsync(track.id());
+            }
             return playbackService.queueTrack(roomId, track)
                     .<ResponseEntity<?>>map(ResponseEntity::ok)
                     .orElseGet(() -> ResponseEntity.notFound().build());
