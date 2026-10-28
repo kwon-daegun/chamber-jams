@@ -58,9 +58,14 @@ public class YouTubeMusicService {
                     continue;
                 }
 
+                // If duration is missing, NA, or unparseable, default it safely to 200s instead of skipping
                 int durationSeconds = parseDurationSeconds(parts[1].trim());
-                // Skip livestreams (0s) or mixes longer than 15 minutes
-                if (durationSeconds <= 0 || durationSeconds > 900) {
+                if (durationSeconds <= 0) {
+                    durationSeconds = 200; 
+                }
+                
+                // Allow tracks up to 20 minutes (1200s) instead of dropping longer mixes
+                if (durationSeconds > 1200) {
                     continue;
                 }
 
@@ -95,6 +100,9 @@ public class YouTubeMusicService {
     }
 
     private int parseDurationSeconds(String raw) {
+        if (raw == null || raw.equalsIgnoreCase("NA") || raw.equalsIgnoreCase("None")) {
+            return 0;
+        }
         try {
             return (int) Math.round(Double.parseDouble(raw));
         } catch (NumberFormatException e) {
@@ -169,7 +177,7 @@ public class YouTubeMusicService {
         File[] files = cacheDir.toFile().listFiles((dir, name) -> name.endsWith(".m4a") || name.endsWith(".part"));
         if (files == null) return;
 
-        long cutoff = System.currentTimeMillis() - (2 * 60 * 60 * 1000L); // 2 hours
+        long cutoff = System.currentTimeMillis() - (30 * 60 * 1000L); // Clean up files older than 30 minutes to save disk space
         for (File file : files) {
             if (file.lastModified() < cutoff) {
                 file.delete();
