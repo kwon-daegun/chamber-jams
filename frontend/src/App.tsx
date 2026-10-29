@@ -178,10 +178,33 @@ function App() {
     }
   }
 
+  // This is a temporary flag to allow testing the app in a browser without Telegram.
+  const isDevPreview =
+    import.meta.env.DEV && import.meta.env.VITE_DEV_PREVIEW === "true";
+
   async function createRoom(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setNotice("");
+
+    // In dev preview mode, we create a mock room without calling the backend.
+    if (isDevPreview) {
+      const mockRoom: Room = {
+        id: `preview-${Date.now()}`,
+        inviteCode: "PREVIEW01",
+        name: roomName.trim(),
+        hostName: "Preview Host",
+        listenerCount: 1,
+        createdAt: new Date().toISOString(),
+      };
+
+      setRoom(mockRoom);
+      setNotice(
+        "Preview room created locally. It is not saved to the backend.",
+      );
+      return;
+    }
+    // ----- //
 
     const initData = window.Telegram?.WebApp?.initData ?? "";
 

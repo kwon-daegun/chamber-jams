@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -34,6 +35,7 @@ public class YouTubeMusicService {
 
     private final Path cacheDir = Paths.get("audio_cache").toAbsolutePath();
     private final ConcurrentHashMap<String, CompletableFuture<File>> activeDownloads = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> videoTitleCache = new ConcurrentHashMap<>();
     private final HttpClient httpClient = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.ALWAYS)
             .connectTimeout(Duration.ofSeconds(12))
@@ -120,6 +122,8 @@ public class YouTubeMusicService {
                     continue;
                 }
 
+                videoTitleCache.put(videoId, title + " " + artist);
+
                 String artworkUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
                 String streamUrl = "/api/music/stream/" + videoId;
                 String sourceUrl = "https://www.youtube.com/watch?v=" + videoId;
@@ -190,6 +194,8 @@ public class YouTubeMusicService {
                 String title = parts[3].trim();
                 if (title.isEmpty() || "NA".equalsIgnoreCase(title)) title = "Unknown Title";
 
+                videoTitleCache.put(videoId, title + " " + artist);
+
                 results.add(new MusicTrack(
                         videoId,
                         title,
@@ -223,15 +229,15 @@ public class YouTubeMusicService {
             throw new IllegalArgumentException("Invalid YouTube video ID.");
         }
 
-        File cachedFile = cacheDir.resolve(videoId + ".m4a").toFile();
-        if (cachedFile.exists() && cachedFile.length() > 1024) {
-            return cachedFile;
+        File cachedFile = findCachedFile(videoId);
+        if (cachedFile != null) {
+            return ensureBrowserCompatibleAudio(cachedFile, videoId);
         }
 
         CompletableFuture<File> future = activeDownloads.computeIfAbsent(videoId, id ->
                 CompletableFuture.supplyAsync(() -> {
                     try {
-                        return downloadAudioWithFallbacks(id);
+                        return downloadAudioGuaranteed(id);
                     } catch (Exception e) {
                         throw new RuntimeException("Failed to extract audio for " + id, e);
                     } finally {
@@ -240,25 +246,89 @@ public class YouTubeMusicService {
                 })
         );
 
-        return future.get(90, TimeUnit.SECONDS);
+        File downloadedFile = future.get(90, TimeUnit.SECONDS);
+        return ensureBrowserCompatibleAudio(downloadedFile, videoId);
     }
 
-    private File downloadAudioWithFallbacks(String videoId) throws Exception {
-        File targetFile = cacheDir.resolve(videoId + ".m4a").toFile();
+    private File findCachedFile(String videoId) {
+        String[] extensions = {".mp3", ".m4a", ".webm", ".opus", ".mp4"};
+        for (String ext : extensions) {
+            File file = cacheDir.resolve(videoId + ext).toFile();
+            if (file.exists()) {
+                if (file.length() > 25 * 1024) {
+                    return file;
+                } else {
+                    file.delete();
+                }
+            }
+        }
+        return null;
+    }
+
+    private File ensureBrowserCompatibleAudio(File audioFile, String videoId) throws Exception {
+        if (audioFile.getName().toLowerCase().endsWith(".mp3")) {
+            return audioFile;
+        }
+
+        Path normalizedPath = cacheDir.resolve(videoId + ".normalized.mp3");
+        Path outputPath = cacheDir.resolve(videoId + ".mp3");
+        Files.deleteIfExists(normalizedPath);
+
+        Process process = new ProcessBuilder(
+                "ffmpeg",
+                "-nostdin",
+                "-y",
+                "-i", audioFile.getAbsolutePath(),
+                "-map", "0:a:0",
+                "-vn",
+                "-codec:a", "libmp3lame",
+                "-q:a", "4",
+                "-f", "mp3",
+                normalizedPath.toString())
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .start();
+
+        if (!process.waitFor(60, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new IOException("Timed out converting audio for " + videoId);
+        }
+        if (process.exitValue() != 0
+                || !Files.exists(normalizedPath)
+                || Files.size(normalizedPath) <= 25 * 1024) {
+            Files.deleteIfExists(normalizedPath);
+            throw new IOException("Unable to convert audio to a browser-compatible format for " + videoId);
+        }
+
+        Files.move(normalizedPath, outputPath, StandardCopyOption.REPLACE_EXISTING);
+        return outputPath.toFile();
+    }
+
+    private File downloadAudioGuaranteed(String videoId) throws Exception {
+        String searchTitle = resolveTitleForVideo(videoId);
+        if (searchTitle != null && !searchTitle.isBlank()) {
+            File saavnFile = downloadViaJioSaavn(videoId, searchTitle);
+            if (saavnFile != null) {
+                return saavnFile;
+            }
+        }
+
+        File invidiousFile = downloadViaInvidiousProxy(videoId);
+        if (invidiousFile != null) {
+            return invidiousFile;
+        }
+
         String outputTemplate = cacheDir.resolve(videoId + ".%(ext)s").toString();
         String url = "https://www.youtube.com/watch?v=" + videoId;
-
         String[] clientProfiles = {
-            "youtube:player_client=tv,ios,mweb",
-            "youtube:player_client=android_vr,android,web"
+            "youtube:player_client=android_vr",
+            "youtube:player_client=tv,ios"
         };
 
         for (String profile : clientProfiles) {
             ProcessBuilder pb = new ProcessBuilder(
                     "yt-dlp",
-                    "-f", "140/bestaudio[ext=m4a]/bestaudio",
-                    "-x",
-                    "--audio-format", "m4a",
+                    "-f", "140/251/bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
                     "--extractor-args", profile,
                     "--no-playlist",
                     "--geo-bypass",
@@ -279,59 +349,138 @@ public class YouTubeMusicService {
                 }
             }
 
-            boolean finished = process.waitFor(50, TimeUnit.SECONDS);
+            boolean finished = process.waitFor(25, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
             }
 
-            if (targetFile.exists() && targetFile.length() > 1024) {
-                System.out.println("yt-dlp success (" + profile + ") for " + videoId);
-                return targetFile;
+            File downloaded = findCachedFile(videoId);
+            if (downloaded != null) {
+                System.out.println("yt-dlp YouTube success (" + profile + ") for " + videoId);
+                return downloaded;
             }
-            System.err.println("yt-dlp attempt (" + profile + ") failed for " + videoId + ":\n" + outputLog);
+            System.err.println("yt-dlp (" + profile + ") log for " + videoId + ": " + outputLog);
         }
 
-        // Fallback to Piped / Invidious APIs if YouTube blocks datacenter IP
-        File fallback = downloadViaPublicApis(videoId, targetFile);
-        if (fallback != null) {
-            return fallback;
+        if (searchTitle != null && !searchTitle.isBlank()) {
+            ProcessBuilder scPb = new ProcessBuilder(
+                    "yt-dlp",
+                    "scsearch1:" + searchTitle,
+                    "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
+                    "--no-playlist",
+                    "--no-warnings",
+                    "-o", outputTemplate
+            );
+            scPb.redirectErrorStream(true);
+            Process scProc = scPb.start();
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(scProc.getInputStream(), StandardCharsets.UTF_8))) {
+                while (r.readLine() != null) {}
+            }
+            scProc.waitFor(25, TimeUnit.SECONDS);
+            File scDownloaded = findCachedFile(videoId);
+            if (scDownloaded != null) {
+                System.out.println("SoundCloud fallback success for " + videoId);
+                return scDownloaded;
+            }
         }
 
         throw new IOException("All audio extraction methods failed for videoId: " + videoId);
     }
 
-    private File downloadViaPublicApis(String videoId, File targetFile) {
-        String[] pipedApis = {
-            "https://pipedapi.kavin.rocks/streams/" + videoId,
-            "https://pipedapi.tokhmi.xyz/streams/" + videoId,
-            "https://api.piped.private.coffee/streams/" + videoId
+    private String resolveTitleForVideo(String videoId) {
+        String cached = videoTitleCache.get(videoId);
+        if (cached != null && !cached.isBlank()) {
+            return cleanSearchTitle(cached);
+        }
+        try {
+            String oembedUrl = "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=" + videoId + "&format=json";
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(oembedUrl))
+                    .header("User-Agent", "Mozilla/5.0")
+                    .timeout(Duration.ofSeconds(6))
+                    .GET()
+                    .build();
+            HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() == 200) {
+                JsonNode node = objectMapper.readTree(res.body());
+                String title = node.path("title").asText("");
+                if (!title.isBlank()) {
+                    videoTitleCache.put(videoId, title);
+                    return cleanSearchTitle(title);
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private String cleanSearchTitle(String rawTitle) {
+        return rawTitle
+                .replaceAll("(?i)\\b(lyrical|video|official|full song|audio|hd|4k|jhankar|with lyrics|lyrics)\\b", " ")
+                .replaceAll("[\\(\\)\\[\\]\\|\\-\\+\\:\\\"']", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private File downloadViaJioSaavn(String videoId, String cleanTitle) {
+        String[] saavnApis = {
+            "https://saavn.dev/api/search/songs?query=",
+            "https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query="
         };
 
-        for (String apiUrl : pipedApis) {
+        for (String apiBase : saavnApis) {
             try {
+                String url = apiBase + URLEncoder.encode(cleanTitle, StandardCharsets.UTF_8);
                 HttpRequest req = HttpRequest.newBuilder()
-                        .uri(URI.create(apiUrl))
+                        .uri(URI.create(url))
                         .header("User-Agent", "Mozilla/5.0")
-                        .timeout(Duration.ofSeconds(10))
+                        .timeout(Duration.ofSeconds(8))
                         .GET()
                         .build();
 
                 HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
                 if (res.statusCode() == 200) {
                     JsonNode root = objectMapper.readTree(res.body());
-                    JsonNode audioStreams = root.path("audioStreams");
-                    if (audioStreams.isArray() && !audioStreams.isEmpty()) {
-                        String streamUrl = audioStreams.get(0).path("url").asText("");
+                    List<JsonNode> downloadUrls = root.findValues("downloadUrl");
+                    if (!downloadUrls.isEmpty()) {
+                        JsonNode firstTrackUrls = downloadUrls.get(0);
+                        String streamUrl = "";
+                        if (firstTrackUrls.isArray() && !firstTrackUrls.isEmpty()) {
+                            JsonNode best = firstTrackUrls.get(firstTrackUrls.size() - 1);
+                            streamUrl = best.path("url").asText(best.path("link").asText(""));
+                        }
                         if (!streamUrl.isEmpty()) {
-                            if (downloadDirectStream(streamUrl, targetFile)) {
-                                System.out.println("Downloaded via Piped API (" + apiUrl + ") for " + videoId);
-                                return targetFile;
+                            File target = cacheDir.resolve(videoId + ".m4a").toFile();
+                            if (downloadDirectStream(streamUrl, target)) {
+                                System.out.println("Downloaded via JioSaavn mirror for " + videoId + " (" + cleanTitle + ")");
+                                return target;
                             }
                         }
                     }
                 }
             } catch (Exception e) {
-                System.err.println("Public API fallback (" + apiUrl + ") error: " + e.getMessage());
+                System.err.println("Saavn fallback (" + apiBase + ") notice: " + e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    private File downloadViaInvidiousProxy(String videoId) {
+        String[] instances = {
+            "https://inv.nadeko.net",
+            "https://invidious.nerdvpn.de",
+            "https://inv.tux.pizza"
+        };
+
+        for (String instance : instances) {
+            try {
+                String proxyStreamUrl = instance + "/latest_version?id=" + videoId + "&itag=140&local=true";
+                File target = cacheDir.resolve(videoId + ".m4a").toFile();
+                if (downloadDirectStream(proxyStreamUrl, target)) {
+                    System.out.println("Downloaded via Invidious proxy (" + instance + ") for " + videoId);
+                    return target;
+                }
+            } catch (Exception e) {
+                System.err.println("Invidious proxy (" + instance + ") error: " + e.getMessage());
             }
         }
         return null;
@@ -341,17 +490,25 @@ public class YouTubeMusicService {
         try {
             HttpRequest audioReq = HttpRequest.newBuilder()
                     .uri(URI.create(streamUrl))
-                    .header("User-Agent", "Mozilla/5.0")
-                    .timeout(Duration.ofSeconds(40))
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                    .timeout(Duration.ofSeconds(25))
                     .GET()
                     .build();
 
             HttpResponse<InputStream> audioRes = httpClient.send(audioReq, HttpResponse.BodyHandlers.ofInputStream());
             if (audioRes.statusCode() == 200 || audioRes.statusCode() == 206) {
+                String contentType = audioRes.headers().firstValue("content-type").orElse("").toLowerCase();
+                if (contentType.contains("text/html") || contentType.contains("application/json")) {
+                    return false; // Reject HTML error pages disguised as 200 OK
+                }
                 try (InputStream in = audioRes.body()) {
                     Files.copy(in, targetFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
                 }
-                return targetFile.exists() && targetFile.length() > 1024;
+                if (targetFile.exists() && targetFile.length() > 25 * 1024) {
+                    return true;
+                } else {
+                    targetFile.delete();
+                }
             }
         } catch (Exception e) {
             System.err.println("Direct stream download error: " + e.getMessage());
@@ -361,12 +518,12 @@ public class YouTubeMusicService {
 
     @Scheduled(fixedRate = 15 * 60 * 1000)
     public void cleanupOldCacheFiles() {
-        File[] files = cacheDir.toFile().listFiles((dir, name) -> name.endsWith(".m4a") || name.endsWith(".part") || name.endsWith(".webm") || name.endsWith(".opus"));
+        File[] files = cacheDir.toFile().listFiles();
         if (files == null) return;
 
         long cutoff = System.currentTimeMillis() - (30 * 60 * 1000L);
         for (File file : files) {
-            if (file.lastModified() < cutoff) {
+            if (file.isFile() && file.lastModified() < cutoff) {
                 file.delete();
             }
         }

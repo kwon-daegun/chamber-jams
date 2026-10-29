@@ -91,84 +91,78 @@ export default function AudiusMusicPlayer({
   const [previousTrack, setPreviousTrack] = useState<MusicTrack | null>(null);
 
   const [revision, setRevision] = useState(0);
-  const [roomMembers, setRoomMembers] = useState<RoomMemberProfile[]>([]);
-  const [membersError, setMembersError] = useState("");
+  const [roomMembers] = useState<RoomMemberProfile[]>([]);
+  const [membersError] = useState("");
 
+  // ake localPreview active whenever VITE_DEV_PREVIEW is true or room.id starts with preview-
+  const localPreview =
+    import.meta.env.DEV &&
+    (import.meta.env.VITE_DEV_PREVIEW === "true" ||
+      room.id.startsWith("preview-"));
   const telegramInitData = window.Telegram?.WebApp?.initData ?? "";
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function refreshMembers() {
-      if (!telegramInitData) {
-        setRoomMembers([]);
-        setMembersError(
-          "Open Chamber Jams inside Telegram to see room members.",
-        );
-        return;
-      }
-
-      try {
-        const headers = {
-          "X-Telegram-Init-Data": telegramInitData,
-        };
-
-        const heartbeatResponse = await fetch(
-          `${API_BASE}/api/rooms/${encodeURIComponent(room.id)}/heartbeat`,
-          {
-            method: "POST",
-            headers,
-          },
-        );
-
-        if (!heartbeatResponse.ok) {
-          throw new Error(
-            heartbeatResponse.status === 403
-              ? "You are not an active member of this room."
-              : "Unable to refresh room membership.",
-          );
-        }
-
-        const response = await fetch(
-          `${API_BASE}/api/rooms/${encodeURIComponent(room.id)}/members`,
-          { headers },
-        );
-
-        if (!response.ok) {
-          throw new Error(
-            response.status === 403
-              ? "Join this room to see its members."
-              : "Unable to load room members.",
-          );
-        }
-
-        const members = (await response.json()) as RoomMemberProfile[];
-
-        if (!cancelled) {
-          setRoomMembers(members);
-          setMembersError("");
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setMembersError(
-            err instanceof Error ? err.message : "Unable to load room members.",
-          );
-        }
-      }
-    }
-
-    void refreshMembers();
-
-    // Refresh presence before the backend's 45-second timeout.
-    const timer = window.setInterval(() => {
-      void refreshMembers();
-    }, 15_000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [room.id, telegramInitData]);
+    // let cancelled = false;
+    // async function refreshMembers() {
+    //   if (!telegramInitData) {
+    //     setRoomMembers([]);
+    //     setMembersError(
+    //       "Open Chamber Jams inside Telegram to see room members.",
+    //     );
+    //     return;
+    //   }
+    //   try {
+    //     const headers = {
+    //       "X-Telegram-Init-Data": telegramInitData,
+    //     };
+    //     const heartbeatResponse = await fetch(
+    //       `${API_BASE}/api/rooms/${encodeURIComponent(room.id)}/heartbeat`,
+    //       {
+    //         method: "POST",
+    //         headers,
+    //       },
+    //     );
+    //     if (!heartbeatResponse.ok) {
+    //       throw new Error(
+    //         heartbeatResponse.status === 403
+    //           ? "You are not an active member of this room."
+    //           : "Unable to refresh room membership.",
+    //       );
+    //     }
+    //     const response = await fetch(
+    //       `${API_BASE}/api/rooms/${encodeURIComponent(room.id)}/members`,
+    //       { headers },
+    //     );
+    //     if (!response.ok) {
+    //       throw new Error(
+    //         response.status === 403
+    //           ? "Join this room to see its members."
+    //           : "Unable to load room members.",
+    //       );
+    //     }
+    //     const members = (await response.json()) as RoomMemberProfile[];
+    //     if (!cancelled) {
+    //       setRoomMembers(members);
+    //       setMembersError("");
+    //     }
+    //   } catch (err) {
+    //     if (!cancelled) {
+    //       setMembersError(
+    //         err instanceof Error ? err.message : "Unable to load room members.",
+    //       );
+    //     }
+    //   }
+    // }
+    // void refreshMembers();
+    // // Refresh presence before the backend's 45-second timeout.
+    // const timer = window.setInterval(() => {
+    //   void refreshMembers();
+    // }, 15_000);
+    // return () => {
+    //   cancelled = true;
+    //   window.clearInterval(timer);
+    // };
+  }, [room.id, telegramInitData, localPreview]);
 
   const loadedTrackIdRef = useRef<string | null>(null);
   const autoplayBlockedRef = useRef(false);
@@ -292,42 +286,42 @@ export default function AudiusMusicPlayer({
 
   // 4. CHANGED: Included X-Telegram-Init-Data header on the 1.5s polling loop
   useEffect(() => {
-    let cancelled = false;
+    // let cancelled = false;
+    if (localPreview) return;
+    // const sync = async () => {
+    //   try {
+    //     const response = await fetch(
+    //       `${API_BASE}/api/rooms/${encodeURIComponent(room.id)}/playback`,
+    //       {
+    //         headers: {
+    //           "X-Telegram-Init-Data": telegramInitData,
+    //         },
+    //       },
+    //     );
 
-    const sync = async () => {
-      try {
-        const response = await fetch(
-          `${API_BASE}/api/rooms/${encodeURIComponent(room.id)}/playback`,
-          {
-            headers: {
-              "X-Telegram-Init-Data": telegramInitData,
-            },
-          },
-        );
+    //     if (!response.ok) return;
 
-        if (!response.ok) return;
+    //     const snapshot = (await response.json()) as PlaybackSnapshot;
 
-        const snapshot = (await response.json()) as PlaybackSnapshot;
+    //     if (!cancelled) {
+    //       applyPlaybackSnapshot(snapshot);
+    //     }
+    //   } catch {
+    //     // Keep the player usable and retry on the next polling cycle.
+    //   }
+    // };
 
-        if (!cancelled) {
-          applyPlaybackSnapshot(snapshot);
-        }
-      } catch {
-        // Keep the player usable and retry on the next polling cycle.
-      }
-    };
+    // void sync();
 
-    void sync();
+    // const timer = window.setInterval(() => {
+    //   void sync();
+    // }, 1500);
 
-    const timer = window.setInterval(() => {
-      void sync();
-    }, 1500);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [room.id, telegramInitData, applyPlaybackSnapshot]);
+    // return () => {
+    //   cancelled = true;
+    //   window.clearInterval(timer);
+    // };
+  }, [room.id, telegramInitData, localPreview, applyPlaybackSnapshot]);
 
   async function updateSharedPlayback(
     path: string,
@@ -426,6 +420,30 @@ export default function AudiusMusicPlayer({
     }
   }
 
+  function startLocalTrack(track: MusicTrack) {
+    const audio = audioRef.current;
+
+    setError("");
+    setActiveTrack(track);
+    setCurrentTime(0);
+    setDuration(track.durationSeconds || 0);
+
+    if (!audio) return;
+
+    audio.pause();
+    audio.src = resolveStreamUrl(track.streamUrl);
+    audio.load();
+
+    void audio.play().catch((err: unknown) => {
+      setIsPlaying(false);
+      setError(
+        `Playback failed: ${
+          err instanceof Error ? err.message : "Unknown media error"
+        }. Check backend stream.`,
+      );
+    });
+  }
+
   async function addToQueue(track: MusicTrack) {
     setError("");
     setQueueNotice("");
@@ -438,6 +456,17 @@ export default function AudiusMusicPlayer({
       return;
     }
 
+    if (localPreview) {
+      if (!activeTrack) {
+        startLocalTrack(track);
+        setQueueNotice(`Playing "${track.title}" locally.`);
+      } else {
+        setQueue((current) => [...current, track]);
+        setQueueNotice(`Added "${track.title}" to Up next.`);
+      }
+      return;
+    }
+
     const success = await updateSharedPlayback("/queue", track);
 
     if (success) {
@@ -446,36 +475,81 @@ export default function AudiusMusicPlayer({
   }
 
   async function playQueuedTrack(track: MusicTrack) {
+    if (localPreview) {
+      setQueue((current) => current.filter((item) => item.id !== track.id));
+      startLocalTrack(track);
+      return;
+    }
     await updateSharedPlayback("/select", {
       trackId: track.id,
     });
   }
 
   function playNextTrack() {
+    if (localPreview) {
+      if (queue.length === 0) {
+        setIsPlaying(false);
+        setActiveTrack(null);
+        return;
+      }
+
+      const [nextTrack, ...remaining] = queue;
+      setQueue(remaining);
+
+      if (nextTrack) {
+        startLocalTrack(nextTrack);
+      }
+      return;
+    }
+
     void updateSharedPlayback("/skip", {
       expectedRevision: revision,
     });
   }
-
   async function togglePlayback() {
     if (!activeTrack) return;
 
-    const path = isPlaying ? "/pause" : "/resume";
     const audio = audioRef.current;
 
-    // Respond immediately to the local user's click.
+    // 1. If playing, pause locally. If paused, play locally.
     if (isPlaying) {
       audio?.pause();
+      setIsPlaying(false);
     } else if (audio) {
       autoplayBlockedRef.current = false;
-
       void audio.play().catch(() => {
         setError("Playback could not start. Try pressing Play again.");
       });
+      setIsPlaying(true);
     }
 
+    // 2. STOPS the 401 Unauthorized error: completely bypasses backend call in local dev mode!
+    if (localPreview) {
+      return;
+    }
+
+    const path = isPlaying ? "/pause" : "/resume";
     await updateSharedPlayback(path);
   }
+  // async function togglePlayback() {
+  //   if (!activeTrack) return;
+
+  //   const path = isPlaying ? "/pause" : "/resume";
+  //   const audio = audioRef.current;
+
+  //   // Respond immediately to the local user's click.
+  //   if (isPlaying) {
+  //     audio?.pause();
+  //   } else if (audio) {
+  //     autoplayBlockedRef.current = false;
+
+  //     void audio.play().catch(() => {
+  //       setError("Playback could not start. Try pressing Play again.");
+  //     });
+  //   }
+
+  //   await updateSharedPlayback(path);
+  // }
 
   function seekTo(value: number) {
     const audio = audioRef.current;
@@ -496,21 +570,10 @@ export default function AudiusMusicPlayer({
 
   return (
     <section className="music-dashboard">
-      <header className="music-dashboard-hero">
-        <p className="eyebrow">MADE FOR CHATTING CHAMBER</p>
-        <h1>
-          Good music.
-          <br />
-          <span>Better together.</span>
-        </h1>
-        <p>For the songs you send at 2 AM, and the friends who just get it.</p>
-      </header>
-
       <div className="music-dashboard-grid">
         <article className="lobby-card dashboard-main-card">
           <div className="dashboard-room-heading">
             <div className="dashboard-room-copy">
-              <p className="eyebrow">● YOUR LISTENING ROOM</p>
               <h2>{room.name}</h2>
               <p className="muted">
                 {queue.length === 0
@@ -564,21 +627,11 @@ export default function AudiusMusicPlayer({
 
           <div className="dashboard-track-info">
             <div>
-              <p className="eyebrow">ON REPEAT WITH EVERYONE</p>
               <h3>{activeTrack?.title ?? "Your next favourite song"}</h3>
               <p className="muted">
                 {activeTrack?.artist ?? "Search for a song to get started."}
               </p>
             </div>
-
-            <button
-              className="dashboard-heart-button"
-              type="button"
-              aria-label="Invite friends to listen"
-              onClick={onInviteClick}
-            >
-              ♡
-            </button>
           </div>
 
           <div className="dashboard-progress">
